@@ -82,13 +82,13 @@ def main():
     Dime cómo me he recuperado y qué tipo de entrenamiento o descanso recomiendas para hoy. Termina con un emoji.
     """
     
-    # Llamada directa a los servidores de Google (esquivando la librería antigua)
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+    # 🔥 Solucionado: Apuntamos directamente a gemini-pro 🔥
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={gemini_key}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
     try:
         gemini_resp = requests.post(gemini_url, json=payload)
-        gemini_resp.raise_for_status() # Comprueba si hay errores HTTP
+        gemini_resp.raise_for_status() 
         ai_message = gemini_resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         print("✅ Análisis generado con éxito.")
     except Exception as e:
@@ -105,11 +105,13 @@ def main():
     if tel_token and tel_chat_id:
         print("Enviando mensaje a Telegram...")
         url = f"https://api.telegram.org/bot{tel_token}/sendMessage"
+        
+        # 🔥 Solucionado: Quitamos el 'parse_mode' para que Telegram no colapse con símbolos raros 🔥
         payload = {
             "chat_id": tel_chat_id,
-            "text": f"📊 *Resumen Garmin {yesterday_str}*\n\n{ai_message}",
-            "parse_mode": "Markdown"
+            "text": f"📊 Resumen Garmin {yesterday_str}\n\n{ai_message}"
         }
+        
         resp = requests.post(url, json=payload)
         if resp.status_code == 200:
             print("✅ Mensaje enviado a Telegram correctamente.")
