@@ -1,8 +1,8 @@
 import os
-import json
 import base64
 import io
 import tarfile
+import tempfile
 import garth
 from garminconnect import Garmin
 import requests
@@ -11,7 +11,7 @@ from datetime import date, timedelta
 
 def main():
     # ---------------------------------------------------------
-    # 1. Recuperar e Inyectar Tokens de Garmin desde Base64
+    # 1. Recuperar Tokens de Garmin desde Base64
     # ---------------------------------------------------------
     garmin_b64 = os.environ.get("GARMIN_TOKEN_B64")
     if not garmin_b64:
@@ -20,33 +20,19 @@ def main():
     print("Desempaquetando tokens de Garmin...")
     tokens_bytes = base64.b64decode(garmin_b64.strip())
     
-    # Extraemos el contenido comprimido a un diccionario en memoria
-    token_data = {}
+    # Extraemos los tokens a un directorio temporal seguro
+    tmp_dir = tempfile.mkdtemp()
     with tarfile.open(fileobj=io.BytesIO(tokens_bytes), mode="r:gz") as tar:
-        for member in tar.getmembers():
-            if member.isfile():
-                f = tar.extractfile(member)
-                if f:
-                    # Guardamos el JSON de cada token en el diccionario
-                    filename = os.path.basename(member.name)
-                    token_data[filename] = json.loads(f.read().decode('utf-8'))
+        tar.extractall(path=tmp_dir)
     
-    # Inyectamos los tokens directamente en el cliente garth en memoria
+    # Iniciamos sesión cargando los tokens desde la carpeta temporal
     try:
-        if "oauth1_token.json" in token_data:
-            garth.client.oauth1_token = garth.exc.Oauth1Token(**token_data["oauth1_token.json"])
-        if "oauth2_token.json" in token_data:
-            garth.client.oauth2_token = garth.exc.Oauth2Token(**token_data["oauth2_token.json"])
-        if "domain.json" in token_data:
-            garth.client.domain = token_data["domain.json"]
-        print("✅ Tokens inyectados en memoria correctamente.")
+        garth.resume(tmp_dir)
+        garmin = Garmin()
+        garmin.garth = garth.client
+        print("✅ Conectado a Garmin Connect con éxito.")
     except Exception as e:
-        raise ValueError(f"❌ ERROR al inyectar tokens: {e}")
-
-    # Inicializamos el cliente principal de Garmin usando el cliente garth inyectado
-    garmin = Garmin()
-    garmin.garth = garth.client
-    print("✅ Conectado a Garmin Connect con éxito.")
+        raise ValueError(f"❌ ERROR al iniciar sesión con los tokens: {e}")
 
     # ---------------------------------------------------------
     # 2. Descargar Métricas de Ayer
@@ -70,8 +56,14 @@ def main():
     sleep_hours = round(sleep_duration_ms / (1000 * 60 * 60), 1) if sleep_duration_ms else 'No data'
     
     stress_avg = stress_data.get('averageStressLevel', 'No data')
-    hrv_avg = hrv_data.get('hrvSummary', {}).get('weeklyAvg', 'No data')  # Usamos la media semanal como referencia
-    rhr = rhr_data.get('allMetrics', {}).get('metricsMap', {}).get('WELLNESS_RESTING_HEART_RATE', [{}])[0].get('value', 'No data')
+    hrv_avg = hrv_data.get('hrvSummary', {}).get('weeklyAvg', 'No data')
+    
+    # Extraer la frecuencia cardíaca en reposo de forma segura
+    rhr = 'No data'
+    if rhr_data and 'allMetrics' in rhr_data and 'metricsMap' in rhr_data['allMetrics']:
+        metrics_map = rhr_data['allMetrics']['metricsMap']
+        if 'WELLNESS_RESTING_HEART_RATE' in metrics_map and metrics_map['WELLNESS_RESTING_HEART_RATE']:
+            rhr = metrics_map['WELLNESS_RESTING_HEART_RATE'][0].get('value', 'No data')
 
     activity_summary = []
     if activities:
@@ -90,7 +82,6 @@ def main():
 
     print("Generando análisis con Gemini...")
     genai.configure(api_key=gemini_key)
-    # Usamos gemini-1.5-flash por ser rápido y eficiente para texto
     model = genai.GenerativeModel('gemini-1.5-flash')
 
     prompt = f"""
