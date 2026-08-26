@@ -82,8 +82,8 @@ def main():
     Dime cómo me he recuperado y qué tipo de entrenamiento o descanso recomiendas para hoy. Termina con un emoji.
     """
     
-    # 🔥 Solucionado: Apuntamos directamente a gemini-pro 🔥
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={gemini_key}"
+    # 🔥 SOLUCIÓN FINAL: Usamos el modelo correcto y actual (gemini-1.5-flash) 🔥
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
     try:
@@ -106,7 +106,6 @@ def main():
         print("Enviando mensaje a Telegram...")
         url = f"https://api.telegram.org/bot{tel_token}/sendMessage"
         
-        # 🔥 Solucionado: Quitamos el 'parse_mode' para que Telegram no colapse con símbolos raros 🔥
         payload = {
             "chat_id": tel_chat_id,
             "text": f"📊 Resumen Garmin {yesterday_str}\n\n{ai_message}"
