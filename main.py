@@ -10,12 +10,11 @@ garmin_b64 = os.environ.get("GARMIN_TOKEN_B64")
 if not garmin_b64:
     raise ValueError("No se encontró el token de Garmin.")
 
-os.makedirs("./garth_tokens", exist_ok=True)
 with open("tokens.tar.gz", "wb") as f:
     f.write(base64.b64decode(garmin_b64))
 
 import subprocess
-subprocess.run(["tar", "-xzf", "tokens.tar.gz", "-C", "./garth_tokens"], check=True)
+subprocess.run(["tar", "-xzf", "tokens.tar.gz"], check=True)
 
 # 2. Conectar a Garmin
 garth.resume("./garth_tokens")
