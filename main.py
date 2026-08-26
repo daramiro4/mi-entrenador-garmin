@@ -70,7 +70,9 @@ def main():
 
     print("Generando análisis con Gemini...")
     genai.configure(api_key=gemini_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # 🔥 Modelo actualizado a una versión totalmente compatible 🔥
+    model = genai.GenerativeModel('gemini-pro')
 
     prompt = f"""
     Eres un entrenador personal de élite. Analiza mis métricas de salud y recuperación de ayer ({yesterday_str}) y dame un resumen breve, motivador y directo (máximo 150 palabras). 
@@ -88,10 +90,10 @@ def main():
     try:
         response = model.generate_content(prompt)
         ai_message = response.text.strip()
+        print("✅ Análisis generado con éxito.")
     except Exception as e:
         ai_message = f"❌ ERROR al generar el mensaje con Gemini: {e}"
-
-    print("Análisis generado:\n", ai_message)
+        print(ai_message)
 
     # ---------------------------------------------------------
     # 4. Enviar Mensaje a Telegram
