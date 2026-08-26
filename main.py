@@ -25,21 +25,12 @@ def main():
     with tarfile.open(fileobj=io.BytesIO(tokens_bytes), mode="r:gz") as tar:
         tar.extractall(path=tmp_dir)
     
-    # Iniciamos sesión usando la vía oficial de la librería
+    # Iniciamos sesión reanudando los tokens desde la carpeta temporal
     try:
+        garth.resume(tmp_dir)
         garmin = Garmin()
-        garmin.login(tmp_dir)
-        
-        # Parche de seguridad para asegurar que el nombre de usuario se asigna correctamente
-        if not garmin.display_name:
-            garth.resume(tmp_dir)
-            garmin.garth = garth.client
-            try:
-                garmin.display_name = garth.client.profile.get("displayName")
-            except AttributeError:
-                garmin.display_name = garth.client.profile.display_name
-
-        print(f"✅ Conectado a Garmin Connect con éxito (Usuario: {garmin.display_name})")
+        garmin.garth = garth.client
+        print("✅ Conectado a Garmin Connect con éxito.")
     except Exception as e:
         raise ValueError(f"❌ ERROR al iniciar sesión con los tokens: {e}")
 
