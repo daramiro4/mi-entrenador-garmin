@@ -1,4 +1,4 @@
-iimport os
+import os
 from garminconnect import Garmin
 import requests
 from datetime import date, timedelta
