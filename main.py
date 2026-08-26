@@ -10,14 +10,10 @@ garmin_b64 = os.environ.get("GARMIN_TOKEN_B64")
 if not garmin_b64:
     raise ValueError("No se encontró la variable GARMIN_TOKEN_B64.")
 
-os.makedirs("./garth_tokens", exist_ok=True)
-
-with open("tokens.tar.gz", "wb") as f:
-    f.write(base64.b64decode(garmin_b64.strip()))
-
-import subprocess
-# Intentar descomprimir directamente en la carpeta garth_tokens
-subprocess.run("tar -xzf tokens.tar.gz -C ./garth_tokens --strip-components=1 2>/dev/null || tar -xzf tokens.tar.gz -C ./garth_tokens", shell=True, check=True)
+import io, tarfile
+tokens_bytes = base64.b64decode(garmin_b64.strip())
+with tarfile.open(fileobj=io.BytesIO(tokens_bytes), mode="r:gz") as tar:
+    tar.extractall(path="./garth_tokens")
 # 2. Conectar a Garmin
 garth.resume("./garth_tokens")
 today = datetime.date.today().isoformat()
