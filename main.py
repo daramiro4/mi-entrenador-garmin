@@ -1,9 +1,4 @@
 import os
-import base64
-import io
-import tarfile
-import tempfile
-import garth
 from garminconnect import Garmin
 import requests
 import google.generativeai as genai
@@ -11,36 +6,21 @@ from datetime import date, timedelta
 
 def main():
     # ---------------------------------------------------------
-    # 1. Recuperar Tokens de Garmin desde Base64
+    # 1. Iniciar sesión en Garmin de forma nativa
     # ---------------------------------------------------------
-    garmin_b64 = os.environ.get("GARMIN_TOKEN_B64")
-    if not garmin_b64:
-        raise ValueError("❌ ERROR: El secreto GARMIN_TOKEN_B64 no existe o está vacío.")
+    garmin_email = os.environ.get("GARMIN_EMAIL")
+    garmin_pass = os.environ.get("GARMIN_PASSWORD")
+    
+    if not garmin_email or not garmin_pass:
+        raise ValueError("❌ ERROR: Faltan los secretos GARMIN_EMAIL o GARMIN_PASSWORD en GitHub.")
 
-    print("Desempaquetando tokens de Garmin...")
-    tokens_bytes = base64.b64decode(garmin_b64.strip())
-    
-    tmp_dir = tempfile.mkdtemp()
-    with tarfile.open(fileobj=io.BytesIO(tokens_bytes), mode="r:gz") as tar:
-        tar.extractall(path=tmp_dir)
-    
-    # Iniciamos sesión reanudando los tokens
+    print("Iniciando sesión en Garmin Connect...")
     try:
-        garth.resume(tmp_dir)
-        garmin = Garmin()
-        garmin.garth = garth.client
-        
-        # 🔥 EL PARCHE DEFINITIVO 🔥
-        # Forzamos la descarga del perfil para obtener el 'display_name' obligatorio
-        try:
-            garmin.display_name = garth.client.profile.get("displayName")
-        except (AttributeError, TypeError):
-            garth.client.download_profile()
-            garmin.display_name = garth.client.profile.get("displayName")
-            
+        garmin = Garmin(garmin_email, garmin_pass)
+        garmin.login()
         print(f"✅ Conectado a Garmin Connect con éxito. (Usuario: {garmin.display_name})")
     except Exception as e:
-        raise ValueError(f"❌ ERROR al iniciar sesión con los tokens: {e}")
+        raise ValueError(f"❌ ERROR al iniciar sesión nativa: {e}")
 
     # ---------------------------------------------------------
     # 2. Descargar Métricas de Ayer
