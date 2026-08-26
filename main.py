@@ -1,7 +1,6 @@
 import os
 from garminconnect import Garmin
 import requests
-import google.generativeai as genai
 from datetime import date, timedelta
 
 def main():
@@ -62,18 +61,14 @@ def main():
     act_str = ", ".join(activity_summary) if activity_summary else "Descanso"
 
     # ---------------------------------------------------------
-    # 3. Analizar con Google Gemini
+    # 3. Analizar con Google Gemini (Vía API Directa)
     # ---------------------------------------------------------
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if not gemini_key:
         raise ValueError("❌ ERROR: El secreto GEMINI_API_KEY no existe o está vacío.")
 
     print("Generando análisis con Gemini...")
-    genai.configure(api_key=gemini_key)
     
-    # 🔥 Modelo actualizado a una versión totalmente compatible 🔥
-    model = genai.GenerativeModel('gemini-pro')
-
     prompt = f"""
     Eres un entrenador personal de élite. Analiza mis métricas de salud y recuperación de ayer ({yesterday_str}) y dame un resumen breve, motivador y directo (máximo 150 palabras). 
     
@@ -87,13 +82,19 @@ def main():
     Dime cómo me he recuperado y qué tipo de entrenamiento o descanso recomiendas para hoy. Termina con un emoji.
     """
     
+    # Llamada directa a los servidores de Google (esquivando la librería antigua)
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    
     try:
-        response = model.generate_content(prompt)
-        ai_message = response.text.strip()
+        gemini_resp = requests.post(gemini_url, json=payload)
+        gemini_resp.raise_for_status() # Comprueba si hay errores HTTP
+        ai_message = gemini_resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         print("✅ Análisis generado con éxito.")
     except Exception as e:
-        ai_message = f"❌ ERROR al generar el mensaje con Gemini: {e}"
-        print(ai_message)
+        error_details = gemini_resp.text if 'gemini_resp' in locals() else str(e)
+        ai_message = f"❌ ERROR al contactar con Gemini: {error_details}"
+        print(f"Error detallado de Gemini: {error_details}")
 
     # ---------------------------------------------------------
     # 4. Enviar Mensaje a Telegram
