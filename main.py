@@ -20,17 +20,25 @@ def main():
     print("Desempaquetando tokens de Garmin...")
     tokens_bytes = base64.b64decode(garmin_b64.strip())
     
-    # Extraemos los tokens a un directorio temporal seguro
     tmp_dir = tempfile.mkdtemp()
     with tarfile.open(fileobj=io.BytesIO(tokens_bytes), mode="r:gz") as tar:
         tar.extractall(path=tmp_dir)
     
-    # Iniciamos sesión reanudando los tokens desde la carpeta temporal
+    # Iniciamos sesión reanudando los tokens
     try:
         garth.resume(tmp_dir)
         garmin = Garmin()
         garmin.garth = garth.client
-        print("✅ Conectado a Garmin Connect con éxito.")
+        
+        # 🔥 EL PARCHE DEFINITIVO 🔥
+        # Forzamos la descarga del perfil para obtener el 'display_name' obligatorio
+        try:
+            garmin.display_name = garth.client.profile.get("displayName")
+        except (AttributeError, TypeError):
+            garth.client.download_profile()
+            garmin.display_name = garth.client.profile.get("displayName")
+            
+        print(f"✅ Conectado a Garmin Connect con éxito. (Usuario: {garmin.display_name})")
     except Exception as e:
         raise ValueError(f"❌ ERROR al iniciar sesión con los tokens: {e}")
 
