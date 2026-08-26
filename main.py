@@ -5,22 +5,21 @@ import datetime
 import garth
 from garminconnect import Garmin
 
-# 1. Restaurar tokens de Garmin desde GitHub Secrets
+import os, base64, io, tarfile
+from garminconnect import Garmin
+
+# 1. Restaurar tokens desde GitHub Secrets
 garmin_b64 = os.environ.get("GARMIN_TOKEN_B64")
 if not garmin_b64:
     raise ValueError("No se encontró la variable GARMIN_TOKEN_B64.")
 
-import io, tarfile
 tokens_bytes = base64.b64decode(garmin_b64.strip())
 with tarfile.open(fileobj=io.BytesIO(tokens_bytes), mode="r:gz") as tar:
     tar.extractall(path="./garth_tokens")
-# 2. Conectar a Garmin
-garth.resume("./garth_tokens")
-today = datetime.date.today().isoformat()
 
+# 2. Cargar la sesión de Garmin
 garmin = Garmin()
-garmin.login(tokenstate=garth.client.dumps())
-
+garmin.login("./garth_tokens")
 # 3. Extraer Métricas clave
 try:
     stats = garmin.get_user_summary(today)
