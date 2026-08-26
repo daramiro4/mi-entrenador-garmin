@@ -1,3 +1,4 @@
 garminconnect
 garth
 requests
+google-generativeai
