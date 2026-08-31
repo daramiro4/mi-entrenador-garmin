@@ -1,0 +1,3 @@
+supabase/.temp/
+__pycache__/
+*.pyc

@@ -2,3 +2,4 @@ garminconnect
 garth
 requests
 google-generativeai
+supabase
