@@ -13,7 +13,12 @@ define `app`) con el entrypoint de un framework detectado automáticamente.
 
 import json
 import os
+import sys
 from http.server import BaseHTTPRequestHandler
+
+# Vercel ejecuta cada archivo de /api sin añadir su propio directorio a
+# sys.path, así que el import de un módulo hermano falla sin este ajuste.
+sys.path.insert(0, os.path.dirname(__file__))
 
 from garminconnect import Garmin
 from workout_builder import build_cycling_workout
