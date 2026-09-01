@@ -65,6 +65,17 @@ def save_activities(supabase, date_str, activities):
     rows = []
     for act in activities:
         duration_seconds = act.get("duration")
+        # Garmin ya manda el pulso medio/máximo y el tiempo en cada zona en
+        # el resumen de la actividad -- no hace falta pedir nada aparte.
+        hr_zone_seconds = None
+        if act.get("hrTimeInZone_1") is not None:
+            hr_zone_seconds = {
+                "z1": act.get("hrTimeInZone_1"),
+                "z2": act.get("hrTimeInZone_2"),
+                "z3": act.get("hrTimeInZone_3"),
+                "z4": act.get("hrTimeInZone_4"),
+                "z5": act.get("hrTimeInZone_5"),
+            }
         rows.append({
             "user_id": USER_ID,
             "external_id": str(act.get("activityId")),
@@ -75,6 +86,9 @@ def save_activities(supabase, date_str, activities):
             "normalized_power": act.get("normPower"),
             "tss": act.get("trainingStressScore"),
             "training_load": act.get("activityTrainingLoad"),
+            "avg_hr": act.get("averageHR"),
+            "max_hr": act.get("maxHR"),
+            "hr_zone_seconds": hr_zone_seconds,
             "raw_data": act,
             "source": "garmin",
         })
@@ -98,10 +112,61 @@ def get_body_battery_range(garmin, date_str):
         return None, None
 
 
-def calculate_fatigue_index(supabase, target_date_str):
+# --- Señal adicional de HRV (decisión propia, no viene del ACWR) ---
+# El ACWR solo ve carga de entrenamiento -- no detecta sobrecarga por mala
+# noche, estrés o enfermedad. El HRV sí. Umbral y ventana documentados como
+# ajustables, mismo criterio que el resto de constantes del proyecto.
+HRV_BASELINE_WINDOW_DAYS = 28
+HRV_BASELINE_MIN_SAMPLES = 5  # por debajo de esto se ignora la señal, no hay base fiable
+HRV_DROP_THRESHOLD_PCT = 0.15
+
+
+def _hrv_warning_note(supabase, target_date_str, today_hrv_ms):
+    """Devuelve una frase explicativa si el HRV de hoy cae por debajo de la
+    media reciente, o None si no hay señal (sin dato de hoy, o sin
+    suficiente historial para una media fiable)."""
+    if not isinstance(today_hrv_ms, (int, float)):
+        return None
+
+    target_date = date.fromisoformat(target_date_str)
+    window_start = (target_date - timedelta(days=HRV_BASELINE_WINDOW_DAYS)).isoformat()
+    window_end = (target_date - timedelta(days=1)).isoformat()
+
+    try:
+        resp = (
+            supabase.table("daily_metrics")
+            .select("hrv_ms")
+            .eq("user_id", USER_ID)
+            .gte("date", window_start)
+            .lte("date", window_end)
+            .execute()
+        )
+        values = [r["hrv_ms"] for r in (resp.data or []) if r.get("hrv_ms") is not None]
+    except Exception as e:
+        print(f"⚠️ Error leyendo daily_metrics para la línea base de HRV: {e}")
+        return None
+
+    if len(values) < HRV_BASELINE_MIN_SAMPLES:
+        return None
+
+    baseline = sum(values) / len(values)
+    if baseline <= 0:
+        return None
+
+    drop_pct = (baseline - today_hrv_ms) / baseline
+    if drop_pct < HRV_DROP_THRESHOLD_PCT:
+        return None
+
+    return f"HRV {round(drop_pct * 100)}% por debajo de tu media de los últimos {HRV_BASELINE_WINDOW_DAYS} días."
+
+
+def calculate_fatigue_index(supabase, target_date_str, today_hrv_ms=None):
     """
     ACWR = media(training_load últimos 7 días) / media(training_load últimos 28 días).
     'Datos insuficientes' = sin ninguna actividad registrada en la ventana de 28 días.
+    El HRV de hoy (si viene y hay línea base suficiente) solo puede agravar
+    la recomendación del ACWR, nunca mejorarla -- mismo espíritu que la capa
+    diaria adaptativa de mi-entrenador-web (nunca cancela, solo degrada).
     """
     if supabase is None:
         return None
@@ -150,6 +215,12 @@ def calculate_fatigue_index(supabase, target_date_str):
                 recommendation = "precaucion"
             else:
                 recommendation = "normal"
+
+    hrv_note = _hrv_warning_note(supabase, target_date_str, today_hrv_ms)
+    if hrv_note:
+        if recommendation == "normal":
+            recommendation = "precaucion"
+        notes = f"{notes} {hrv_note}" if notes else hrv_note
 
     try:
         supabase.table("fatigue_index").upsert({
@@ -235,7 +306,7 @@ def main():
     supabase = get_supabase()
     save_daily_metrics(supabase, yesterday_str, sleep_score, sleep_duration_minutes, stress_avg, hrv_avg, rhr, bb_max, bb_min)
     save_activities(supabase, yesterday_str, activities)
-    fatigue = calculate_fatigue_index(supabase, yesterday_str)
+    fatigue = calculate_fatigue_index(supabase, yesterday_str, today_hrv_ms=hrv_avg)
 
     # ---------------------------------------------------------
     # 4. Analizar con Google Gemini (Vía API Directa)
