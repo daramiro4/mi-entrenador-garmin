@@ -53,13 +53,19 @@ class handler(BaseHTTPRequestHandler):
         date_str = body.get("date")
         session_type = body.get("session_type")
         planned_tss = body.get("planned_tss")
+        duration_minutes = body.get("duration_minutes")
         ftp_watts = body.get("ftp_watts")
+
+        has_tss = isinstance(planned_tss, (int, float))
+        # duration_minutes solo es válido para z2 (reacclimatización, decisión 5)
+        # -- quality siempre necesita planned_tss para construir los intervalos.
+        has_duration = session_type == "z2" and isinstance(duration_minutes, (int, float))
 
         if (
             not date_str
             or session_type not in SUPPORTED_SESSION_TYPES
-            or not isinstance(planned_tss, (int, float))
             or not isinstance(ftp_watts, (int, float))
+            or not (has_tss or has_duration)
         ):
             self._send_json(400, {"ok": False, "error": "missing or invalid fields"})
             return
@@ -71,7 +77,13 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
-            workout_json = build_cycling_workout(session_type, planned_tss, ftp_watts, date_str)
+            workout_json = build_cycling_workout(
+                session_type,
+                ftp_watts,
+                date_str,
+                planned_tss=planned_tss if has_tss else None,
+                duration_minutes=duration_minutes if has_duration else None,
+            )
 
             garmin = Garmin(garmin_email, garmin_pass)
             garmin.login()

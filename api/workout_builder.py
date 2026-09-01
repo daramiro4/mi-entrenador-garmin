@@ -72,8 +72,14 @@ def _power_zone_target(ftp_watts, low_pct, high_pct):
     }
 
 
-def _build_z2_workout(planned_tss, ftp_watts, date_str):
-    duration_seconds = max(600, round((planned_tss / (Z2_ASSUMED_IF**2 * 100)) * 3600))
+def _build_z2_workout(ftp_watts, date_str, planned_tss=None, duration_minutes=None):
+    """`duration_minutes` cubre las z2 de reaclimatación (decisión 5), que no
+    llevan `planned_tss` a propósito -- si viene, manda sobre la derivación
+    por TSS."""
+    if duration_minutes is not None:
+        duration_seconds = max(600, round(duration_minutes * 60))
+    else:
+        duration_seconds = max(600, round((planned_tss / (Z2_ASSUMED_IF**2 * 100)) * 3600))
     zone = _power_zone_target(ftp_watts, Z2_LOW_PCT, Z2_HIGH_PCT)
 
     step = {
@@ -178,10 +184,12 @@ def _build_quality_workout(planned_tss, ftp_watts, date_str):
     }
 
 
-def build_cycling_workout(session_type, planned_tss, ftp_watts, date_str):
+def build_cycling_workout(session_type, ftp_watts, date_str, planned_tss=None, duration_minutes=None):
     """Construye el JSON de un workout de ciclismo para Garmin Connect."""
     if session_type == "z2":
-        return _build_z2_workout(planned_tss, ftp_watts, date_str)
+        return _build_z2_workout(ftp_watts, date_str, planned_tss=planned_tss, duration_minutes=duration_minutes)
     if session_type == "quality":
+        if planned_tss is None:
+            raise ValueError("quality requiere planned_tss (no soporta duración fija)")
         return _build_quality_workout(planned_tss, ftp_watts, date_str)
     raise ValueError(f"session_type no soportado para envío a Garmin: {session_type}")
