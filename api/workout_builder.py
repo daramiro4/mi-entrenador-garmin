@@ -193,3 +193,47 @@ def build_cycling_workout(session_type, ftp_watts, date_str, planned_tss=None, d
             raise ValueError("quality requiere planned_tss (no soporta duración fija)")
         return _build_quality_workout(planned_tss, ftp_watts, date_str)
     raise ValueError(f"session_type no soportado para envío a Garmin: {session_type}")
+
+
+_STEP_TYPE_LABEL = {
+    STEP_TYPE_WARMUP["stepTypeId"]: "Calentamiento",
+    STEP_TYPE_COOLDOWN["stepTypeId"]: "Enfriamiento",
+    STEP_TYPE_INTERVAL["stepTypeId"]: "Intervalo",
+    STEP_TYPE_RECOVERY["stepTypeId"]: "Recuperación",
+}
+
+
+def _summarize_step(step, reps):
+    label = _STEP_TYPE_LABEL.get(step["stepType"]["stepTypeId"], "Bloque")
+    if reps > 1:
+        label = f"{label} x{reps}"
+
+    entry = {
+        "label": label,
+        "duration_minutes": round(step["endConditionValue"] / 60),
+    }
+    if step.get("targetType", {}).get("workoutTargetTypeId") == TARGET_POWER_ZONE["workoutTargetTypeId"]:
+        entry["target_low_watts"] = step["targetValueOne"]
+        entry["target_high_watts"] = step["targetValueTwo"]
+    return entry
+
+
+def summarize_workout(workout_json):
+    """Resume un workout ya construido (build_cycling_workout) para mostrarlo
+    como vista previa antes de subirlo -- mismo JSON, nunca se desincroniza
+    porque no reimplementa ningún cálculo, solo lo recorre."""
+    steps = []
+    for segment in workout_json["workoutSegments"]:
+        for step in segment["workoutSteps"]:
+            if step["type"] == "RepeatGroupDTO":
+                reps = int(step["numberOfIterations"])
+                for sub_step in step["workoutSteps"]:
+                    steps.append(_summarize_step(sub_step, reps))
+            else:
+                steps.append(_summarize_step(step, 1))
+
+    return {
+        "workout_name": workout_json["workoutName"],
+        "estimated_duration_minutes": round(workout_json["estimatedDurationInSecs"] / 60),
+        "steps": steps,
+    }

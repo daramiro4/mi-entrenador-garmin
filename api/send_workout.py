@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler
 sys.path.insert(0, os.path.dirname(__file__))
 
 from garminconnect import Garmin
-from workout_builder import build_cycling_workout
+from workout_builder import build_cycling_workout, summarize_workout
 
 SUPPORTED_SESSION_TYPES = ("z2", "quality")
 
@@ -55,6 +55,7 @@ class handler(BaseHTTPRequestHandler):
         planned_tss = body.get("planned_tss")
         duration_minutes = body.get("duration_minutes")
         ftp_watts = body.get("ftp_watts")
+        preview = bool(body.get("preview"))
 
         has_tss = isinstance(planned_tss, (int, float))
         # duration_minutes solo es válido para z2 (reacclimatización, decisión 5)
@@ -70,12 +71,6 @@ class handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "missing or invalid fields"})
             return
 
-        garmin_email = os.environ.get("GARMIN_EMAIL")
-        garmin_pass = os.environ.get("GARMIN_PASSWORD")
-        if not garmin_email or not garmin_pass:
-            self._send_json(500, {"ok": False, "error": "missing Garmin credentials"})
-            return
-
         try:
             workout_json = build_cycling_workout(
                 session_type,
@@ -84,7 +79,23 @@ class handler(BaseHTTPRequestHandler):
                 planned_tss=planned_tss if has_tss else None,
                 duration_minutes=duration_minutes if has_duration else None,
             )
+        except Exception as e:  # noqa: BLE001
+            self._send_json(400, {"ok": False, "error": str(e)})
+            return
 
+        # La vista previa no toca Garmin en absoluto -- ni credenciales ni
+        # red -- para que sea barata y no dependa de que la cuenta esté bien.
+        if preview:
+            self._send_json(200, {"ok": True, "preview": summarize_workout(workout_json)})
+            return
+
+        garmin_email = os.environ.get("GARMIN_EMAIL")
+        garmin_pass = os.environ.get("GARMIN_PASSWORD")
+        if not garmin_email or not garmin_pass:
+            self._send_json(500, {"ok": False, "error": "missing Garmin credentials"})
+            return
+
+        try:
             garmin = Garmin(garmin_email, garmin_pass)
             garmin.login()
 
