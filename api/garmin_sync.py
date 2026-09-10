@@ -267,7 +267,7 @@ def sync_day(garmin, supabase, target_date_str):
 
     # Extraer valores útiles (Garmin puede devolver None si no hay datos ese día)
     sleep_score = (sleep_data or {}).get('dailySleepDTO', {}).get('sleepScores', {}).get('overall', {}).get('value', 'No data')
-    sleep_time_seconds = (sleep_data or {}).get('dailySleepDTO', {}).get('sleepTimeSeconds', 0)
+    sleep_time_seconds = (sleep_data or {}).get('dailySleepDTO', {}).get('sleepTimeSeconds') or 0
     sleep_duration_ms = sleep_time_seconds * 1000
     sleep_hours = round(sleep_duration_ms / (1000 * 60 * 60), 1) if sleep_duration_ms else 'No data'
     sleep_duration_minutes = round(sleep_time_seconds / 60) if sleep_time_seconds else None
