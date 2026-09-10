@@ -68,39 +68,12 @@ class handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "days must be a positive integer"})
             return
 
-        debug_days = body.get("debug_days") if isinstance(body, dict) else None
-
         today = date.today()
         target_dates = [(today - timedelta(days=offset)).isoformat() for offset in range(days - 1, -1, -1)]
 
         try:
             garmin = Garmin(garmin_email, garmin_pass)
             garmin.login()
-
-            # DIAGNÓSTICO TEMPORAL (quitar tras confirmar por qué faltan
-            # actividades en el backfill): {"debug_days": N} pide a Garmin
-            # las actividades de los últimos N días SIN acotar por fecha
-            # exacta, para ver bajo qué fecha las tiene registradas de
-            # verdad -- get_activities_by_date(fecha, fecha) por día podría
-            # estar perdiendo alguna por una fecha distinta a la esperada.
-            if isinstance(debug_days, int) and debug_days > 0:
-                raw = garmin.get_activities_by_date(
-                    (today - timedelta(days=debug_days)).isoformat(), today.isoformat()
-                )
-                self._send_json(200, {
-                    "ok": True,
-                    "debug": [
-                        {
-                            "activityId": a.get("activityId"),
-                            "activityName": a.get("activityName"),
-                            "typeKey": (a.get("activityType") or {}).get("typeKey"),
-                            "startTimeLocal": a.get("startTimeLocal"),
-                            "startTimeGMT": a.get("startTimeGMT"),
-                        }
-                        for a in (raw or [])
-                    ],
-                })
-                return
 
             supabase = get_supabase()
             results = [sync_day(garmin, supabase, target_date_str) for target_date_str in target_dates]
