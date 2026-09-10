@@ -68,6 +68,9 @@ class handler(BaseHTTPRequestHandler):
         if not isinstance(days, int) or days < 1:
             self._send_json(400, {"ok": False, "error": "days must be a positive integer"})
             return
+        if days > 30:
+            self._send_json(400, {"ok": False, "error": "days no puede superar 30"})
+            return
 
         today = date.today()
         target_dates = [(today - timedelta(days=offset)).isoformat() for offset in range(days - 1, -1, -1)]
