@@ -20,6 +20,7 @@ sync_day() ya es idempotente (upsert por user_id+date/external_id), así que
 repetir un día ya sincronizado no duplica nada.
 """
 
+import hmac
 import json
 import os
 import sys
@@ -46,7 +47,7 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         send_secret = os.environ.get("GARMIN_SEND_SECRET")
         auth_header = self.headers.get("Authorization", "")
-        if not send_secret or auth_header != f"Bearer {send_secret}":
+        if not send_secret or not hmac.compare_digest(auth_header, f"Bearer {send_secret}"):
             self._send_json(401, {"ok": False, "error": "unauthorized"})
             return
 
