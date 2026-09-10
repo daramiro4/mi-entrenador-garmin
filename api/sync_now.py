@@ -1,26 +1,29 @@
 """Vercel Python Function: sincronización manual e inmediata con Garmin
-Connect para el día de HOY.
+Connect para el día de HOY (o los últimos `days` días).
 
 Independiente del cron diario (main.py, GitHub Actions, que siempre trae
 "ayer") -- login propio, sin token cacheado, mismo patrón que main.py usa.
 Se invoca desde mi-entrenador-web cuando el usuario pulsa "Actualizar desde
-Garmin" en el dashboard. Reutiliza el mismo secreto (`GARMIN_SEND_SECRET`)
-que ya protege api/send_workout.py -- ambos endpoints viven en el mismo
-proyecto Vercel y tienen el mismo nivel de confianza (solo mi-entrenador-web
-los llama).
+Garmin" en el dashboard (sin body -- un solo día, hoy). Reutiliza el mismo
+secreto (`GARMIN_SEND_SECRET`) que ya protege api/send_workout.py -- ambos
+endpoints viven en el mismo proyecto Vercel y tienen el mismo nivel de
+confianza (solo mi-entrenador-web los llama).
 
 BaseHTTPRequestHandler puro (sin Flask/FastAPI), mismo motivo que
 send_workout.py: no añadir dependencias nuevas ni arriesgar que Vercel
 confunda main.py con el entrypoint de un framework detectado automáticamente.
 
-No hace backfill de "ayer": si el cron ya corrió esa mañana, ayer ya está en
-Supabase; si no corrió, es un problema del cron, no de este botón.
+`days` (body JSON opcional, ej. `{"days": 7}`) sincroniza también los
+`days - 1` días anteriores a hoy, de más antiguo a más reciente -- backfill
+puntual bajo demanda (curl directo, no hay botón para esto en el dashboard).
+sync_day() ya es idempotente (upsert por user_id+date/external_id), así que
+repetir un día ya sincronizado no duplica nada.
 """
 
 import json
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler
 
 # Vercel ejecuta cada archivo de /api sin añadir su propio directorio a
@@ -53,21 +56,38 @@ class handler(BaseHTTPRequestHandler):
             self._send_json(500, {"ok": False, "error": "missing Garmin credentials"})
             return
 
-        today_str = date.today().isoformat()
+        try:
+            content_length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(content_length)) if content_length else {}
+        except (ValueError, json.JSONDecodeError):
+            self._send_json(400, {"ok": False, "error": "invalid JSON body"})
+            return
+
+        days = body.get("days", 1) if isinstance(body, dict) else 1
+        if not isinstance(days, int) or days < 1:
+            self._send_json(400, {"ok": False, "error": "days must be a positive integer"})
+            return
+
+        today = date.today()
+        target_dates = [(today - timedelta(days=offset)).isoformat() for offset in range(days - 1, -1, -1)]
 
         try:
             garmin = Garmin(garmin_email, garmin_pass)
             garmin.login()
 
             supabase = get_supabase()
-            result = sync_day(garmin, supabase, today_str)
+            results = [sync_day(garmin, supabase, target_date_str) for target_date_str in target_dates]
         except Exception as e:  # noqa: BLE001 -- superficie cualquier fallo de Garmin/Supabase al llamador
             self._send_json(502, {"ok": False, "error": str(e)})
             return
 
         self._send_json(200, {
             "ok": True,
-            "date": today_str,
-            "activities_synced": result["activities_synced"],
-            "fatigue": result["fatigue"],
+            "date": today.isoformat(),
+            "activities_synced": sum(r["activities_synced"] for r in results),
+            "fatigue": results[-1]["fatigue"],
+            "days": [
+                {"date": r["date"], "activities_synced": r["activities_synced"], "fatigue": r["fatigue"]}
+                for r in results
+            ],
         })
