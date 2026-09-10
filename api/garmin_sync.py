@@ -12,6 +12,11 @@ from datetime import date, timedelta
 
 from supabase import create_client
 
+# USER_ID fijo porque este es un proyecto de un solo usuario (ver README) --
+# decisión intencional, no un descuido. Protegida por assert_single_user(),
+# llamada al arrancar sync_day(): si alguna vez aparece más de una fila en
+# profiles, aborta en vez de seguir escribiendo datos bajo un USER_ID que ya
+# no representaría de forma unívoca a "el" usuario.
 USER_ID = "d6310074-a851-49e9-bdb2-9750e752d5b6"
 
 GARMIN_TYPE_MAP = {
@@ -40,6 +45,23 @@ def get_supabase():
         print("⚠️ Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY. Se omite la sincronización con Supabase.")
         return None
     return create_client(url, key)
+
+
+def assert_single_user(supabase):
+    """Guardia para el USER_ID fijo (ver comentario junto a la constante):
+    si profiles llega a tener más de una fila, USER_ID ya no identifica de
+    forma unívoca a "el" usuario, así que se aborta en vez de seguir
+    escribiendo datos potencialmente bajo el usuario equivocado."""
+    if supabase is None:
+        return
+    resp = supabase.table("profiles").select("*", count="exact").execute()
+    count = resp.count if resp.count is not None else len(resp.data or [])
+    if count > 1:
+        raise RuntimeError(
+            "ERROR: se ha detectado más de un usuario en profiles -- el "
+            "USER_ID fijo de este bot ya no es válido, requiere refactor "
+            "antes de continuar"
+        )
 
 
 def to_int(value):
@@ -256,6 +278,8 @@ def sync_day(garmin, supabase, target_date_str):
     endpoint de sincronización manual (api/sync_now.py, siempre con "hoy") --
     el único parámetro que cambia es la fecha.
     """
+    assert_single_user(supabase)
+
     try:
         sleep_data = garmin.get_sleep_data(target_date_str)
         stress_data = garmin.get_stress_data(target_date_str)
