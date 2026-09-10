@@ -2,9 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/**/*.py": {
-      "excludeFiles": "{main.py,README.md,supabase/**,.github/**}"
-    },
-    "api/sync_now.py": {
       "excludeFiles": "{main.py,README.md,supabase/**,.github/**}",
       "maxDuration": 60
     }
