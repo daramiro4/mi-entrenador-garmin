@@ -10,6 +10,11 @@ ConditionType, TargetType) en vez de adivinarlos.
 
 Solo soporta 'z2' y 'quality' -- 'strength'/'rest' no tienen contenido de
 potencia que traducir a un workout de Garmin.
+
+Aparte, build_hr_workout() construye la sesión extra de bici en el gimnasio
+(voluntaria, fuera del plan): objetivo por zona de pulso predefinida en
+Garmin (Z1-Z5, se envía el número de zona, nunca bpm) y sin FTP, porque se
+hace con el Forerunner en una bici de spinning sin potenciómetro.
 """
 
 SPORT_TYPE_CYCLING = {"sportTypeId": 2, "sportTypeKey": "cycling", "displayOrder": 2}
@@ -35,6 +40,10 @@ END_CONDITION_ITERATIONS = {
 
 TARGET_NO_TARGET = {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target", "displayOrder": 1}
 TARGET_POWER_ZONE = {"workoutTargetTypeId": 2, "workoutTargetTypeKey": "power.zone", "displayOrder": 2}
+# TargetType.HEART_RATE_ZONE = 4 en garminconnect/workout.py (v0.3.16). Con
+# `zoneNumber` el reloj usa las zonas de pulso que el usuario tiene
+# configuradas en Garmin, en vez de un rango de bpm propio.
+TARGET_HEART_RATE_ZONE = {"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone", "displayOrder": 4}
 
 # --- Supuestos de zona/duración (documentados, ajustables) ---
 # Igual que en lib/plan-generator.ts de mi-entrenador-web: no hay una fórmula
@@ -56,6 +65,22 @@ QUALITY_INTERVAL_IF = 1.10
 QUALITY_RECOVERY_IF = 0.55
 QUALITY_MIN_REPS = 3
 QUALITY_MAX_REPS = 8
+
+# --- Sesión extra en el gimnasio, por pulso (ajustable) ---
+# Intervalos largos a propósito: el pulso tarda 60-90 s en subir, con
+# bloques de 1' el reloj avisaría de "pulso bajo" todo el intervalo.
+HR_RECOVERY_SECONDS = 1200
+HR_RECOVERY_ZONE = 1
+HR_Z2_SECONDS = 1800
+HR_Z2_ZONE = 2
+HR_INTERVALS_WARMUP_SECONDS = 600
+HR_INTERVALS_INTERVAL_SECONDS = 180
+HR_INTERVALS_RECOVERY_SECONDS = 120
+HR_INTERVALS_COOLDOWN_SECONDS = 300
+HR_INTERVALS_REPS = 3
+HR_INTERVALS_WORK_ZONE = 4
+HR_INTERVALS_EASY_ZONE = 2
+HR_VARIANTS = ("hr_recovery", "hr_z2", "hr_intervals")
 
 
 def _tss_for_block(seconds, intensity_factor):
@@ -195,6 +220,68 @@ def build_cycling_workout(session_type, ftp_watts, date_str, planned_tss=None, d
     raise ValueError(f"session_type no soportado para envío a Garmin: {session_type}")
 
 
+def _hr_step(step_order, step_type, seconds, zone):
+    return {
+        "type": "ExecutableStepDTO",
+        "stepOrder": step_order,
+        "stepType": step_type,
+        "endCondition": END_CONDITION_TIME,
+        "endConditionValue": seconds,
+        "targetType": TARGET_HEART_RATE_ZONE,
+        "zoneNumber": zone,
+    }
+
+
+def _hr_workout(name, steps, total_seconds):
+    return {
+        "workoutName": name,
+        "sportType": SPORT_TYPE_CYCLING,
+        "estimatedDurationInSecs": total_seconds,
+        "workoutSegments": [
+            {"segmentOrder": 1, "sportType": SPORT_TYPE_CYCLING, "workoutSteps": steps}
+        ],
+    }
+
+
+def build_hr_workout(variant, date_str):
+    """Sesión extra de bici en el gimnasio, dirigida por pulso. `variant` la
+    elige mi-entrenador-web (lib/extra-session.ts) según la fatiga."""
+    if variant == "hr_recovery":
+        step = _hr_step(1, STEP_TYPE_RECOVERY, HR_RECOVERY_SECONDS, HR_RECOVERY_ZONE)
+        return _hr_workout(f"Extra gym recuperación {date_str}", [step], HR_RECOVERY_SECONDS)
+
+    if variant == "hr_z2":
+        step = _hr_step(1, STEP_TYPE_INTERVAL, HR_Z2_SECONDS, HR_Z2_ZONE)
+        return _hr_workout(f"Extra gym Z2 {date_str}", [step], HR_Z2_SECONDS)
+
+    if variant == "hr_intervals":
+        repeat_group = {
+            "type": "RepeatGroupDTO",
+            "stepOrder": 2,
+            "stepType": STEP_TYPE_REPEAT,
+            "numberOfIterations": HR_INTERVALS_REPS,
+            "workoutSteps": [
+                _hr_step(1, STEP_TYPE_INTERVAL, HR_INTERVALS_INTERVAL_SECONDS, HR_INTERVALS_WORK_ZONE),
+                _hr_step(2, STEP_TYPE_RECOVERY, HR_INTERVALS_RECOVERY_SECONDS, HR_INTERVALS_EASY_ZONE),
+            ],
+            "endCondition": END_CONDITION_ITERATIONS,
+            "endConditionValue": float(HR_INTERVALS_REPS),
+        }
+        steps = [
+            _hr_step(1, STEP_TYPE_WARMUP, HR_INTERVALS_WARMUP_SECONDS, HR_INTERVALS_EASY_ZONE),
+            repeat_group,
+            _hr_step(3, STEP_TYPE_COOLDOWN, HR_INTERVALS_COOLDOWN_SECONDS, HR_INTERVALS_EASY_ZONE),
+        ]
+        total_seconds = (
+            HR_INTERVALS_WARMUP_SECONDS
+            + HR_INTERVALS_REPS * (HR_INTERVALS_INTERVAL_SECONDS + HR_INTERVALS_RECOVERY_SECONDS)
+            + HR_INTERVALS_COOLDOWN_SECONDS
+        )
+        return _hr_workout(f"Extra gym intervalos {date_str}", steps, total_seconds)
+
+    raise ValueError(f"variante de sesión extra no soportada: {variant}")
+
+
 _STEP_TYPE_LABEL = {
     STEP_TYPE_WARMUP["stepTypeId"]: "Calentamiento",
     STEP_TYPE_COOLDOWN["stepTypeId"]: "Enfriamiento",
@@ -215,6 +302,8 @@ def _summarize_step(step, reps):
     if step.get("targetType", {}).get("workoutTargetTypeId") == TARGET_POWER_ZONE["workoutTargetTypeId"]:
         entry["target_low_watts"] = step["targetValueOne"]
         entry["target_high_watts"] = step["targetValueTwo"]
+    if step.get("targetType", {}).get("workoutTargetTypeId") == TARGET_HEART_RATE_ZONE["workoutTargetTypeId"]:
+        entry["target_hr_zone"] = step["zoneNumber"]
     return entry
 
 

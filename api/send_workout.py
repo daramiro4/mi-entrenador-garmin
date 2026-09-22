@@ -22,9 +22,12 @@ from http.server import BaseHTTPRequestHandler
 sys.path.insert(0, os.path.dirname(__file__))
 
 from garminconnect import Garmin
-from workout_builder import build_cycling_workout, summarize_workout
+from workout_builder import HR_VARIANTS, build_cycling_workout, build_hr_workout, summarize_workout
 
 SUPPORTED_SESSION_TYPES = ("z2", "quality")
+# Sesión extra en el gimnasio (voluntaria, no es una fila de planned_sessions):
+# por pulso, sin FTP ni TSS -- solo la variante que eligió mi-entrenador-web.
+EXTRA_HR_SESSION_TYPE = "extra_hr"
 
 
 class handler(BaseHTTPRequestHandler):
@@ -58,6 +61,14 @@ class handler(BaseHTTPRequestHandler):
         ftp_watts = body.get("ftp_watts")
         preview = bool(body.get("preview"))
 
+        if session_type == EXTRA_HR_SESSION_TYPE:
+            variant = body.get("variant")
+            if not date_str or variant not in HR_VARIANTS:
+                self._send_json(400, {"ok": False, "error": "missing or invalid fields"})
+                return
+            self._build_and_send(lambda: build_hr_workout(variant, date_str), date_str, preview)
+            return
+
         has_tss = isinstance(planned_tss, (int, float))
         # duration_minutes solo es válido para z2 (reacclimatización, decisión 5)
         # -- quality siempre necesita planned_tss para construir los intervalos.
@@ -72,14 +83,21 @@ class handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "missing or invalid fields"})
             return
 
-        try:
-            workout_json = build_cycling_workout(
+        self._build_and_send(
+            lambda: build_cycling_workout(
                 session_type,
                 ftp_watts,
                 date_str,
                 planned_tss=planned_tss if has_tss else None,
                 duration_minutes=duration_minutes if has_duration else None,
-            )
+            ),
+            date_str,
+            preview,
+        )
+
+    def _build_and_send(self, build_workout, date_str, preview):
+        try:
+            workout_json = build_workout()
         except Exception as e:  # noqa: BLE001
             self._send_json(400, {"ok": False, "error": str(e)})
             return
