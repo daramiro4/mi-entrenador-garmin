@@ -12,6 +12,14 @@ from datetime import date, timedelta
 
 from supabase import create_client
 
+# Dos contextos de import: el cron (main.py) importa como `api.garmin_sync` con la
+# raíz del repo en sys.path; las funciones Vercel (api/sync_now.py) añaden api/ a
+# sys.path e importan `garmin_sync` suelto.
+try:
+    from api.garmin_extract import extract_hrv_ms, extract_stress_avg, non_null_fields
+except ImportError:
+    from garmin_extract import extract_hrv_ms, extract_stress_avg, non_null_fields
+
 # USER_ID fijo porque este es un proyecto de un solo usuario (ver README) --
 # decisión intencional, no un descuido. Protegida por assert_single_user(),
 # llamada al arrancar sync_day(): si alguna vez aparece más de una fila en
@@ -71,17 +79,25 @@ def to_int(value):
 def save_daily_metrics(supabase, date_str, sleep_score, sleep_duration_minutes, stress_avg, hrv_avg, rhr, bb_max, bb_min):
     if supabase is None:
         return
+    # Solo columnas con valor: un día sin datos no crea una fila vacía, y una
+    # re-sincronización que no trae algo no pisa con null lo ya guardado.
+    metrics = non_null_fields({
+        "sleep_score": to_int(sleep_score),
+        "sleep_duration_minutes": sleep_duration_minutes,
+        "stress_avg": to_int(stress_avg),
+        "hrv_ms": hrv_avg if isinstance(hrv_avg, (int, float)) else None,
+        "resting_hr": to_int(rhr),
+        "body_battery_max": to_int(bb_max),
+        "body_battery_min": to_int(bb_min),
+    })
+    if not metrics:
+        print(f"ℹ️ Garmin no devolvió métricas diarias para {date_str}; no se guarda fila vacía.")
+        return
     try:
         supabase.table("daily_metrics").upsert({
             "user_id": USER_ID,
             "date": date_str,
-            "sleep_score": to_int(sleep_score),
-            "sleep_duration_minutes": sleep_duration_minutes,
-            "stress_avg": to_int(stress_avg),
-            "hrv_ms": hrv_avg if isinstance(hrv_avg, (int, float)) else None,
-            "resting_hr": to_int(rhr),
-            "body_battery_max": to_int(bb_max),
-            "body_battery_min": to_int(bb_min),
+            **metrics,
             "source": "garmin",
         }, on_conflict="user_id,date").execute()
         print("✅ daily_metrics sincronizado con Supabase.")
@@ -296,8 +312,12 @@ def sync_day(garmin, supabase, target_date_str):
     sleep_hours = round(sleep_duration_ms / (1000 * 60 * 60), 1) if sleep_duration_ms else 'No data'
     sleep_duration_minutes = round(sleep_time_seconds / 60) if sleep_time_seconds else None
 
-    stress_avg = (stress_data or {}).get('averageStressLevel', 'No data')
-    hrv_avg = (hrv_data or {}).get('hrvSummary', {}).get('weeklyAvg', 'No data')
+    stress_avg = extract_stress_avg(stress_data)
+    hrv_avg = extract_hrv_ms(hrv_data)
+    # Los valores que se devuelven al llamador (prompt de Gemini en main.py) usan
+    # 'No data' para lo que falta, como antes; a Supabase solo llegan números.
+    stress_avg = stress_avg if stress_avg is not None else 'No data'
+    hrv_avg = hrv_avg if hrv_avg is not None else 'No data'
 
     # Extraer la frecuencia cardíaca en reposo de forma segura
     rhr = 'No data'

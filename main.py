@@ -74,7 +74,7 @@ def main():
     Métricas:
     - Puntuación de Sueño: {sleep_score}/100 ({sleep_hours} horas)
     - Estrés Promedio: {stress_avg}/100
-    - VFC (HRV) Semanal: {hrv_avg} ms
+    - VFC (HRV): {hrv_avg} ms
     - Frecuencia Cardíaca en Reposo: {rhr} ppm
     - Actividad: {act_str}
     - Ratio Carga Aguda:Crónica (ACWR): {acwr_display}
