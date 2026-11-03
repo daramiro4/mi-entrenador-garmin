@@ -17,8 +17,10 @@ from supabase import create_client
 # sys.path e importan `garmin_sync` suelto.
 try:
     from api.garmin_extract import extract_hrv_ms, extract_stress_avg, non_null_fields
+    from api.garmin_strength_sets import extract_exercise_rows
 except ImportError:
     from garmin_extract import extract_hrv_ms, extract_stress_avg, non_null_fields
+    from garmin_strength_sets import extract_exercise_rows
 
 # USER_ID fijo porque este es un proyecto de un solo usuario (ver README) --
 # decisión intencional, no un descuido. Protegida por assert_single_user(),
@@ -139,10 +141,38 @@ def save_activities(supabase, date_str, activities):
             "source": "garmin",
         })
     try:
-        supabase.table("activities").upsert(rows, on_conflict="user_id,external_id").execute()
+        result = supabase.table("activities").upsert(rows, on_conflict="user_id,external_id").execute()
         print(f"✅ {len(rows)} actividad(es) sincronizada(s) con Supabase.")
     except Exception as e:
         print(f"⚠️ Error guardando activities en Supabase: {e}")
+        return
+    save_strength_exercises(supabase, date_str, activities, result)
+
+
+def save_strength_exercises(supabase, date_str, activities, upsert_result):
+    """Guarda los ejercicios y pesos de cada entreno de fuerza en strength_sessions.
+
+    Idempotente: antes de insertar borra solo las filas de esa actividad que vinieron de Garmin
+    (workout_id nulo); las de rutinas hechas en la app (workout_id) no se tocan. Un fallo aquí
+    nunca debe romper la sincronización de la actividad.
+    """
+    try:
+        ids = {str(r.get("external_id")): r.get("id") for r in (upsert_result.data or [])}
+        for act in activities:
+            if map_activity_type(act.get("activityType", {}).get("typeKey")) != "strength":
+                continue
+            exercise_rows = extract_exercise_rows(act)
+            activity_id = ids.get(str(act.get("activityId")))
+            if not exercise_rows or activity_id is None:
+                continue
+            supabase.table("strength_sessions").delete().eq("activity_id", activity_id).is_("workout_id", "null").execute()
+            supabase.table("strength_sessions").insert([
+                {"user_id": USER_ID, "activity_id": activity_id, "date": date_str, **row}
+                for row in exercise_rows
+            ]).execute()
+            print(f"✅ {len(exercise_rows)} ejercicio(s) de fuerza guardado(s) para la actividad {act.get('activityId')}.")
+    except Exception as e:
+        print(f"⚠️ Error guardando ejercicios de fuerza: {e}")
 
 
 def get_body_battery_range(garmin, date_str):
