@@ -19,10 +19,12 @@ try:
     from api.garmin_extract import extract_hrv_ms, extract_stress_avg, non_null_fields
     from api.garmin_strength_sets import extract_exercise_rows
     from api.recovery_signals import RESTING_HR_BASELINE_DAYS, SLEEP_RECENT_NIGHTS, recovery_notes
+    from api.garmin_ftp import extract_cycling_ftp
 except ImportError:
     from garmin_extract import extract_hrv_ms, extract_stress_avg, non_null_fields
     from garmin_strength_sets import extract_exercise_rows
     from recovery_signals import RESTING_HR_BASELINE_DAYS, SLEEP_RECENT_NIGHTS, recovery_notes
+    from garmin_ftp import extract_cycling_ftp
 
 # USER_ID fijo porque este es un proyecto de un solo usuario (ver README) --
 # decisión intencional, no un descuido. Protegida por assert_single_user(),
@@ -347,6 +349,43 @@ def calculate_fatigue_index(supabase, target_date_str, today_hrv_ms=None):
     return {"acwr_ratio": acwr_ratio, "recommendation": recommendation}
 
 
+def save_garmin_ftp(garmin, supabase, target_date_str):
+    """Guarda en `seasons.notes` (garmin_ftp_watts / garmin_ftp_date) el FTP de ciclismo que Garmin tiene
+    registrado, para que mi-entrenador-web lo use como FTP provisional. Mejor esfuerzo: nunca bloquea el
+    sync y solo escribe si el valor cambia. No toca `ftp_history` (solo el test de rampa lo escribe)."""
+    if supabase is None:
+        return
+    try:
+        watts = extract_cycling_ftp(garmin.get_cycling_ftp())
+    except Exception as e:
+        print(f"⚠️ No se pudo leer el FTP de Garmin: {e}")
+        return
+    if watts is None:
+        print("⚠️ Garmin no devolvió un FTP de ciclismo reconocible; se ignora.")
+        return
+    try:
+        resp = (
+            supabase.table("seasons")
+            .select("id, notes")
+            .eq("user_id", USER_ID)
+            .eq("status", "active")
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            return
+        season = rows[0]
+        notes = season.get("notes") or {}
+        if notes.get("garmin_ftp_watts") == watts:
+            return
+        notes = {**notes, "garmin_ftp_watts": watts, "garmin_ftp_date": target_date_str}
+        supabase.table("seasons").update({"notes": notes}).eq("id", season["id"]).eq("user_id", USER_ID).execute()
+        print(f"✅ FTP de Garmin guardado: {watts} W.")
+    except Exception as e:
+        print(f"⚠️ Error guardando el FTP de Garmin en Supabase: {e}")
+
+
 def sync_day(garmin, supabase, target_date_str):
     """Descarga sueño/estrés/VFC/FC reposo/actividades/body battery de Garmin
     Connect para `target_date_str`, los guarda en Supabase, y recalcula
@@ -402,6 +441,7 @@ def sync_day(garmin, supabase, target_date_str):
     save_daily_metrics(supabase, target_date_str, sleep_score, sleep_duration_minutes, stress_avg, hrv_avg, rhr, bb_max, bb_min)
     save_activities(supabase, target_date_str, activities)
     fatigue = calculate_fatigue_index(supabase, target_date_str, today_hrv_ms=hrv_avg)
+    save_garmin_ftp(garmin, supabase, target_date_str)
 
     return {
         "date": target_date_str,
