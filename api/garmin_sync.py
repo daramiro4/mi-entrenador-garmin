@@ -18,9 +18,11 @@ from supabase import create_client
 try:
     from api.garmin_extract import extract_hrv_ms, extract_stress_avg, non_null_fields
     from api.garmin_strength_sets import extract_exercise_rows
+    from api.recovery_signals import RESTING_HR_BASELINE_DAYS, SLEEP_RECENT_NIGHTS, recovery_notes
 except ImportError:
     from garmin_extract import extract_hrv_ms, extract_stress_avg, non_null_fields
     from garmin_strength_sets import extract_exercise_rows
+    from recovery_signals import RESTING_HR_BASELINE_DAYS, SLEEP_RECENT_NIGHTS, recovery_notes
 
 # USER_ID fijo porque este es un proyecto de un solo usuario (ver README) --
 # decisión intencional, no un descuido. Protegida por assert_single_user(),
@@ -236,6 +238,34 @@ def _hrv_warning_note(supabase, target_date_str, today_hrv_ms):
     return f"HRV {round(drop_pct * 100)}% por debajo de tu media de los últimos {HRV_BASELINE_WINDOW_DAYS} días."
 
 
+def _recovery_warning_notes(supabase, target_date_str):
+    """Avisos de recuperación (FC en reposo alta, sueño corto) para `target_date_str`; [] si no hay señal o
+    falla la lectura (nunca debe bloquear el cálculo de fatiga)."""
+    target_date = date.fromisoformat(target_date_str)
+    window_start = (target_date - timedelta(days=RESTING_HR_BASELINE_DAYS)).isoformat()
+    try:
+        resp = (
+            supabase.table("daily_metrics")
+            .select("date, resting_hr, sleep_duration_minutes")
+            .eq("user_id", USER_ID)
+            .gte("date", window_start)
+            .lte("date", target_date_str)
+            .order("date")
+            .execute()
+        )
+        rows = resp.data or []
+    except Exception as e:
+        print(f"⚠️ Error leyendo daily_metrics para las señales de recuperación: {e}")
+        return []
+
+    today_row = next((r for r in rows if r.get("date") == target_date_str), None)
+    resting_today = today_row.get("resting_hr") if today_row else None
+    history = [r.get("resting_hr") for r in rows if r.get("date") != target_date_str]
+    sleep_start = (target_date - timedelta(days=SLEEP_RECENT_NIGHTS - 1)).isoformat()
+    recent_sleep = [r.get("sleep_duration_minutes") for r in rows if r.get("date", "") >= sleep_start]
+    return recovery_notes(resting_today, history, recent_sleep)
+
+
 def calculate_fatigue_index(supabase, target_date_str, today_hrv_ms=None):
     """
     ACWR = media(training_load últimos 7 días) / media(training_load últimos 28 días).
@@ -293,10 +323,12 @@ def calculate_fatigue_index(supabase, target_date_str, today_hrv_ms=None):
                 recommendation = "normal"
 
     hrv_note = _hrv_warning_note(supabase, target_date_str, today_hrv_ms)
-    if hrv_note:
+    warnings = ([hrv_note] if hrv_note else []) + _recovery_warning_notes(supabase, target_date_str)
+    if warnings:
         if recommendation == "normal":
             recommendation = "precaucion"
-        notes = f"{notes} {hrv_note}" if notes else hrv_note
+        extra = " ".join(warnings)
+        notes = f"{notes} {extra}" if notes else extra
 
     try:
         supabase.table("fatigue_index").upsert({
